@@ -4,7 +4,10 @@ import {
   SQSClient,
 } from "@aws-sdk/client-sqs";
 
-const client = new SQSClient({});
+const client = new SQSClient({
+  region: process.env.AWS_REGION,
+});
+
 const SQS_QUEUE_URL = process.env.SQS_QUEUE_URL;
 if (!SQS_QUEUE_URL) {
   console.error("SQS_QUEUE_URL is not defined");

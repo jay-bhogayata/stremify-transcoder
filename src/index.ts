@@ -11,7 +11,7 @@ import { deleteMessage, sqsRun } from "./sqs";
 import { isGPUAvailable } from "./checkGPU";
 
 const s3Client = new S3Client({
-  region: "ap-south-1",
+  region: process.env.AWS_REGION,
 });
 
 async function main() {
