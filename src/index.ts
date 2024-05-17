@@ -8,6 +8,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { createReadStream, createWriteStream } from "fs";
 import { deleteMessage, sqsRun } from "./sqs";
+import { isGPUAvailable } from "./checkGPU";
 
 const s3Client = new S3Client({
   region: "ap-south-1",
@@ -111,12 +112,21 @@ async function main() {
           await fs.promises.mkdir(outputDir, { recursive: true });
           const outputPath = path.join(outputDir, `${resolution.name}.m3u8`);
 
-          // if gpu is not available
-          const ffmpegCommand = `ffmpeg -i ${tempFilePath} -vf "scale=${resolution.width}:${resolution.height}" -c:v libx264 -b:v ${resolution.bitrate} -c:a aac -strict -2 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${outputDir}/%03d.ts ${outputPath}`;
+          const gpu = await isGPUAvailable();
 
-          // if gpu is available
-          // const ffmpegCommand = `ffmpeg -hwaccel cuda -i ${tempFilePath} -vf "scale=${resolution.width}:${resolution.height}" -c:v h264_nvenc -b:v ${resolution.bitrate} -c:a aac -strict -2 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${outputDir}/%03d.ts ${outputPath}`;
+          let ffmpegCommand: string;
 
+          if (gpu) {
+            console.log("GPU is available transcoding with GPU");
+
+            ffmpegCommand = `ffmpeg -hwaccel cuda -i ${tempFilePath} -vf "scale=${resolution.width}:${resolution.height}" -c:v h264_nvenc -b:v ${resolution.bitrate} -c:a aac -strict -2 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${outputDir}/%03d.ts ${outputPath}`;
+          } else {
+            console.log(
+              "GPU is not available transcoding with CPU will take more time"
+            );
+
+            ffmpegCommand = `ffmpeg -i ${tempFilePath} -vf "scale=${resolution.width}:${resolution.height}" -c:v libx264 -b:v ${resolution.bitrate} -c:a aac -strict -2 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${outputDir}/%03d.ts ${outputPath}`;
+          }
           const transcodeProcess = spawn(ffmpegCommand, [], { shell: true });
 
           transcodeProcess.on("exit", (code) => {
