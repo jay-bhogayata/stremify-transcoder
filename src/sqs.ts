@@ -2,6 +2,7 @@ import {
   DeleteMessageCommand,
   ReceiveMessageCommand,
   SQSClient,
+  GetQueueAttributesCommand,
 } from "@aws-sdk/client-sqs";
 
 const client = new SQSClient({
@@ -15,16 +16,20 @@ if (!SQS_QUEUE_URL) {
 }
 
 export const deleteMessage = async (receiptHandle: string | undefined) => {
+  if (!receiptHandle) {
+    console.error("No receipt handle provided");
+    return;
+  }
+
   try {
     const input = {
       QueueUrl: SQS_QUEUE_URL,
       ReceiptHandle: receiptHandle,
     };
     const res = await client.send(new DeleteMessageCommand(input));
-
-    console.log(res);
+    console.log("Message deleted:", res);
   } catch (error) {
-    console.error(error);
+    console.error("Error deleting message:", error);
   }
 };
 
@@ -38,54 +43,65 @@ const receiveMessage = async (queueUrl: string) => {
       })
     );
   } catch (error) {
-    console.error("Error receiving message: ", error);
+    console.error("Error receiving message:", error);
     throw error;
   }
 };
 
 export const sqsRun = async (queueUrl: string = SQS_QUEUE_URL) => {
-  const { Messages } = await receiveMessage(queueUrl);
+  try {
+    const { Messages } = await receiveMessage(queueUrl);
 
-  if (Messages == undefined) {
-    console.error("Message is not available for processing");
-  }
+    if (!Messages || Messages.length === 0) {
+      console.log("No messages received");
+      return null;
+    }
 
-  let ReceiptHandle: string | undefined = "";
-  if (Messages !== undefined) {
-    console.log(Messages[0]?.ReceiptHandle);
-    ReceiptHandle = Messages[0]?.ReceiptHandle;
-  } else {
-    process.exit(1);
-  }
+    const message = Messages[0];
+    const receiptHandle = message.ReceiptHandle;
+    const body = message.Body || "";
 
-  if (!Messages || Messages.length === 0) {
-    console.log("No Messages Received");
-    return;
-  }
-
-  console.log("Messages Received: ", Messages.length);
-
-  for (const m of Messages) {
+    let messageInfo = null;
     try {
-      const msg = m.Body || "";
-      const msgObj = JSON.parse(msg);
+      const msgObj = JSON.parse(body);
       const aa = JSON.parse(msgObj.Message);
-
       if (aa.Records && aa.Records[0] && aa.Records[0].s3) {
-        console.log("Bucket Name: ", aa.Records[0].s3.bucket.name);
-        console.log("Object Key: ", aa.Records[0].s3.object.key);
+        console.log("Bucket Name:", aa.Records[0].s3.bucket.name);
+        console.log("Object Key:", aa.Records[0].s3.object.key);
+
+        messageInfo = {
+          bucket: aa.Records[0].s3.bucket.name,
+          key: aa.Records[0].s3.object.key,
+          receiptHandle,
+        };
       } else {
         console.error("Invalid message format");
       }
-      console.log("---------------------------");
-      const message_info = {
-        bucket: aa.Records[0].s3.bucket.name,
-        key: aa.Records[0].s3.object.key,
-        receiptHandle: ReceiptHandle,
-      };
-      return message_info;
     } catch (error) {
-      console.error("Error processing message: ", error);
+      console.error("Error parsing message:", error);
     }
+
+    return messageInfo;
+  } catch (error) {
+    console.error("Error in sqsRun function:", error);
+    throw error;
   }
 };
+
+export async function getQueueLength() {
+  try {
+    const response = await client.send(
+      new GetQueueAttributesCommand({
+        QueueUrl: SQS_QUEUE_URL,
+        AttributeNames: ["ApproximateNumberOfMessages"],
+      })
+    );
+    return parseInt(
+      response.Attributes?.ApproximateNumberOfMessages || "0",
+      10
+    );
+  } catch (error) {
+    console.error(`Failed to get queue length: ${error}`);
+    return null;
+  }
+}
