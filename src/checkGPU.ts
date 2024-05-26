@@ -1,7 +1,6 @@
 import { spawn } from "child_process";
 
-export function isGPUAvailable() {
-  //-hwaccels prints the list of hardware acceleration methods available
+export function isGPUAvailable(): Promise<boolean> {
   const ffmpegProcess = spawn("ffmpeg", ["-hwaccels"]);
 
   let output = "";

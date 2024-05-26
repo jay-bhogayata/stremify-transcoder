@@ -7,7 +7,7 @@ import {
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { createReadStream, createWriteStream } from "fs";
-import { deleteMessage, sqsRun } from "./sqs";
+import { deleteMessage, getQueueLength, sqsRun } from "./sqs";
 import { isGPUAvailable } from "./checkGPU";
 
 const s3Client = new S3Client({
@@ -15,34 +15,43 @@ const s3Client = new S3Client({
 });
 
 async function main() {
+  let queueLength = await getQueueLength();
+  while (queueLength !== null && queueLength > 0) {
+    console.log(`Queue length: ${queueLength}. Starting transcoding...`);
+    await transcodeVideo();
+    queueLength = await getQueueLength();
+  }
+  console.log("No messages in the queue");
+}
+
+const transcodeVideo = async () => {
   try {
     const message_info = await sqsRun();
-    console.log(
-      "-----------------Bucket info from main-------------------------"
-    );
-    console.log(message_info);
+    console.log("Bucket info from main:", message_info);
 
-    const sourceBucket = message_info?.bucket;
-    const sourceKey = message_info?.key;
+    if (!message_info) {
+      console.log("No valid message received, skipping processing.");
+      return;
+    }
+
+    const sourceBucket = message_info.bucket;
+    const sourceKey = message_info.key;
     const destKey = path.basename(sourceKey, path.extname(sourceKey));
-
-    // process.exit(1);
     const bucketName = "stremify-vod-prod";
 
     console.table({
-      sourceBucket: sourceBucket,
-      sourceKey: sourceKey,
-      destKey: destKey,
-      bucketName: bucketName,
+      sourceBucket,
+      sourceKey,
+      destKey,
+      bucketName,
     });
 
     const tempDir = path.join(__dirname, "temp");
-
     const tempTranscodedDir = path.join(tempDir, "transcoded");
 
     console.table({
       temp_dir: tempDir,
-      temp_tarnscode_dir: tempTranscodedDir,
+      temp_transcode_dir: tempTranscodedDir,
     });
 
     const videoResolutions = [
@@ -68,6 +77,7 @@ async function main() {
         path: `${destKey}/720p/720p.m3u8`,
       },
     ];
+
     const transcodeVideo = async (
       sourceBucket: string,
       sourceKey: string,
@@ -82,27 +92,19 @@ async function main() {
         };
 
         const getObjectCommand = new GetObjectCommand(getObjectParams);
-        const videoStream = await s3Client
-          .send(getObjectCommand)
-          .then(({ Body }) => Body);
+        const { Body } = await s3Client.send(getObjectCommand);
+        if (!Body) {
+          throw new Error("No body received from S3");
+        }
+
+        const bodyData = await Body.transformToByteArray();
 
         await fs.promises.mkdir(tempTranscodedDir, { recursive: true });
         const tempFilePath = path.join(
           tempTranscodedDir,
           path.basename(sourceKey)
         );
-        console.log(tempFilePath);
-
-        const writeStream = createWriteStream(tempFilePath);
-        videoStream?.transformToByteArray().then((data: any) => {
-          writeStream.write(data);
-          writeStream.end();
-        });
-
-        await new Promise((resolve, reject) => {
-          writeStream.on("finish", resolve);
-          writeStream.on("error", reject);
-        });
+        await fs.promises.writeFile(tempFilePath, bodyData);
 
         const commands = [];
         let masterPlaylist = "#EXTM3U\n#EXT-X-VERSION:3\n";
@@ -117,16 +119,13 @@ async function main() {
           let ffmpegCommand: string;
 
           if (gpu) {
-            console.log("GPU is available transcoding with GPU");
-
+            console.log("GPU is available, transcoding with GPU");
             ffmpegCommand = `ffmpeg -hwaccel cuda -i ${tempFilePath} -vf "scale=${resolution.width}:${resolution.height}" -c:v h264_nvenc -b:v ${resolution.bitrate} -c:a aac -strict -2 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${outputDir}/%03d.ts ${outputPath}`;
           } else {
-            console.log(
-              "GPU is not available transcoding with CPU will take more time"
-            );
-
+            console.log("GPU is not available, transcoding with CPU");
             ffmpegCommand = `ffmpeg -i ${tempFilePath} -vf "scale=${resolution.width}:${resolution.height}" -c:v libx264 -b:v ${resolution.bitrate} -c:a aac -strict -2 -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename ${outputDir}/%03d.ts ${outputPath}`;
           }
+
           const transcodeProcess = spawn(ffmpegCommand, [], { shell: true });
 
           transcodeProcess.on("exit", (code) => {
@@ -199,7 +198,6 @@ async function main() {
           }),
         ];
 
-        // Upload the master playlist
         const masterUploadParams = {
           Bucket: bucketName,
           Key: `${destKey}/master.m3u8`,
@@ -212,27 +210,21 @@ async function main() {
 
         await Promise.all([masterUpload, ...uploads]);
         console.log("Files uploaded to S3 successfully");
+
+        const et = new Date().getTime();
+        console.log(`Transcoding and upload took ${et - st} ms`);
       } catch (err) {
         console.error("Error during transcoding and upload:", err);
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
       }
-
-      const et = new Date().getTime();
-      console.log(`Transcoding and upload took ${et - st} ms`);
     };
 
-    transcodeVideo(sourceBucket, sourceKey, destKey)
-      .then(() => {
-        console.log("Transcoding and upload complete");
-        deleteMessage(message_info?.receiptHandle);
-      })
-      .catch((err) => {
-        console.error("Error during transcoding and upload:", err);
-      })
-      .finally(() => {
-        fs.rmSync(tempDir, { recursive: true });
-      });
+    await transcodeVideo(sourceBucket, sourceKey, destKey);
+    await deleteMessage(message_info.receiptHandle);
   } catch (error) {
-    console.error(error);
+    console.error("Error in transcodeVideo function:", error);
   }
-}
+};
+
 main();
