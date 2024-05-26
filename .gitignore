@@ -140,3 +140,22 @@ dist
 # SvelteKit build / generate output
 .svelte-kit
 
+**/.terraform/*
+
+# Ignore variables files
+*.auto.tfvars
+
+# Ignore override files
+*.tfoverride
+
+# Ignore environment-specific files
+.envrc
+
+# Ignore CLI configuration files
+.terraformrc
+terraform.rc
+.terraform.d/plugins
+.terraform.lock.hcl
+secret.tfvars
+
+*.zip
