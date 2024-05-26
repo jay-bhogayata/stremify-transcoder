@@ -1,0 +1,15 @@
+{
+  "name": "complete-job-lambda",
+  "version": "1.0.0",
+  "description": "A Lambda function that processes a complete job event of MediaConvert service",
+  "main": "index.js",
+  "scripts": {
+    "zip": "zip -r complete-job.zip . && mv complete-job.zip .."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "uuid": "^9.0.1"
+  }
+}
