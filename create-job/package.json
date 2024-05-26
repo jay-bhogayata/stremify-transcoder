@@ -1,0 +1,15 @@
+{
+  "name": "create-job-lambda",
+  "version": "1.0.0",
+  "description": "A lambda function to create MediaConvert jobs to transcode video files",
+  "main": "index.js",
+  "scripts": {
+    "zip": "zip -r create-job.zip . && mv create-job.zip .."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "uuid": "^9.0.1"
+  }
+}
